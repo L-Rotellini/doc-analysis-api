@@ -1,0 +1,26 @@
+# Services d'infrastructure locaux pour doc-analysis-api.
+# Lancer :  docker compose up -d
+# Arreter : docker compose down   (ajouter -v pour effacer aussi les donnees)
+services:
+  postgres:
+    image: postgres:16
+    container_name: doc-analysis-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: doc
+      POSTGRES_PASSWORD: doc_password
+      POSTGRES_DB: doc_analysis
+    ports:
+      - '5432:5432' # hote:conteneur — Postgres ecoute sur localhost:5432
+    volumes:
+      - pgdata:/var/lib/postgresql/data # persiste les donnees entre redemarrages
+
+  redis:
+    image: redis:7
+    container_name: doc-analysis-redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379' # hote:conteneur — Redis ecoute sur localhost:6379
+
+volumes:
+  pgdata:
