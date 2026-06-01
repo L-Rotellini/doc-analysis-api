@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>doc-analysis-api — démo</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      @keyframes flash {
+        0% {
+          background-color: rgb(187 247 208);
+        }
+        100% {
+          background-color: transparent;
+        }
+      }
+      .flash {
+        animation: flash 1.6s ease-out;
+      }
+    </style>
+  </head>
+  <body class="bg-slate-50 text-slate-900 min-h-screen">
+    <main class="max-w-3xl mx-auto p-6 space-y-6">
+      <header>
+        <h1 class="text-2xl font-bold">doc-analysis-api</h1>
+        <p class="text-slate-600">
+          Dépose un document, regarde son statut basculer
+          <code class="bg-slate-200 px-1 rounded">pending → analyzed</code> en direct.
+        </p>
+      </header>
+
+      <section class="bg-white p-4 rounded-xl shadow">
+        <form id="form" class="flex gap-2">
+          <input
+            id="documentName"
+            type="text"
+            placeholder="ex. rapport-2026.pdf"
+            required
+            class="flex-1 px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+          <button
+            type="submit"
+            class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition"
+          >
+            Analyser
+          </button>
+        </form>
+        <p id="formMsg" class="text-sm mt-2 text-slate-500"></p>
+      </section>
+
+      <section class="bg-white rounded-xl shadow overflow-hidden">
+        <header class="flex items-center justify-between px-4 py-3 border-b border-slate-200">
+          <h2 class="font-semibold">Demandes</h2>
+          <span id="pollStatus" class="text-xs text-slate-400">…</span>
+        </header>
+        <table class="w-full text-sm">
+          <thead class="bg-slate-50 text-slate-500">
+            <tr>
+              <th class="text-left px-4 py-2">#</th>
+              <th class="text-left px-4 py-2">Document</th>
+              <th class="text-left px-4 py-2">Statut</th>
+              <th class="text-left px-4 py-2">Créée</th>
+              <th class="text-left px-4 py-2">Analysée</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <p id="empty" class="hidden p-6 text-center text-slate-400">
+          Aucune demande pour l'instant.
+        </p>
+      </section>
+
+      <details class="text-sm text-slate-600 bg-white p-4 rounded-xl shadow">
+        <summary class="cursor-pointer font-semibold text-slate-800">Comment ça marche ?</summary>
+        <ol class="list-decimal pl-5 mt-2 space-y-1">
+          <li>
+            Le formulaire appelle <code>POST /requests</code>. AdonisJS insère la demande en base
+            via Kysely (<code>status: pending</code>).
+          </li>
+          <li>
+            L'API dépose un job BullMQ dans Redis et répond <code>202 Accepted</code> tout de
+            suite.
+          </li>
+          <li>
+            Un worker séparé (<code>node ace worker:start</code>) consomme le job, simule
+            l'analyse (2&nbsp;s), puis met à jour la ligne en <code>status: analyzed</code>.
+          </li>
+          <li>
+            Cette page interroge <code>GET /requests</code> chaque seconde pour montrer le
+            basculement en direct.
+          </li>
+        </ol>
+      </details>
+    </main>
+
+    <script>
+      const form = document.getElementById('form')
+      const input = document.getElementById('documentName')
+      const formMsg = document.getElementById('formMsg')
+      const rowsEl = document.getElementById('rows')
+      const emptyEl = document.getElementById('empty')
+      const pollStatus = document.getElementById('pollStatus')
+      let lastStatusById = new Map()
+
+      function escapeHtml(s) {
+        return String(s).replace(
+          /[&<>"']/g,
+          (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]
+        )
+      }
+
+      const statusBadge = (status) => {
+        const cls =
+          status === 'analyzed'
+            ? 'bg-emerald-100 text-emerald-700'
+            : 'bg-amber-100 text-amber-700'
+        return `<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium ${cls}">${status}</span>`
+      }
+
+      const fmtDate = (iso) => (iso ? new Date(iso).toLocaleTimeString() : '—')
+
+      function renderList(list) {
+        if (list.length === 0) {
+          rowsEl.innerHTML = ''
+          emptyEl.classList.remove('hidden')
+          return
+        }
+        emptyEl.classList.add('hidden')
+        rowsEl.innerHTML = list
+          .map((r) => {
+            const changed = lastStatusById.get(r.id) === 'pending' && r.status === 'analyzed'
+            const cls = changed ? 'flash' : ''
+            return `<tr class="border-t border-slate-100 ${cls}">
+              <td class="px-4 py-2 font-mono text-slate-400">#${r.id}</td>
+              <td class="px-4 py-2">${escapeHtml(r.document_name)}</td>
+              <td class="px-4 py-2">${statusBadge(r.status)}</td>
+              <td class="px-4 py-2 text-slate-500">${fmtDate(r.created_at)}</td>
+              <td class="px-4 py-2 text-slate-500">${fmtDate(r.analyzed_at)}</td>
+            </tr>`
+          })
+          .join('')
+        lastStatusById = new Map(list.map((r) => [r.id, r.status]))
+      }
+
+      async function loadRequests() {
+        try {
+          const res = await fetch('/requests')
+          const list = await res.json()
+          renderList(list)
+          pollStatus.textContent = `mis à jour ${new Date().toLocaleTimeString()}`
+        } catch (e) {
+          pollStatus.textContent = 'erreur de rafraîchissement'
+        }
+      }
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault()
+        formMsg.textContent = ''
+        const documentName = input.value.trim()
+        if (!documentName) return
+        const res = await fetch('/requests', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ documentName }),
+        })
+        if (res.ok) {
+          formMsg.textContent = `Demande déposée (202). Le worker va la traiter dans ~2 s.`
+          input.value = ''
+          loadRequests()
+        } else {
+          const data = await res.json().catch(() => ({}))
+          formMsg.textContent = `Erreur : ${data.error || res.status}`
+        }
+      })
+
+      loadRequests()
+      setInterval(loadRequests, 1000)
+    </script>
+  </body>
+</html>
