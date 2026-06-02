@@ -81,9 +81,17 @@ npm run dev                 # http://localhost:3333
 
 ### Tester le flux
 
-**Option 1 — Démo visuelle (recommandée) :** ouvrir <http://localhost:3333/> dans le navigateur.
-Le formulaire dépose une demande, la liste se rafraîchit chaque seconde et la ligne **flashe en vert**
-quand le worker fait basculer son statut de `pending` à `analyzed`.
+**Option 1 — Console visuelle (recommandée) :** ouvrir <http://localhost:3333/> dans le navigateur.
+La page affiche un **pipeline live à 4 nœuds** (API → File Redis → Worker → PostgreSQL),
+des compteurs animés, et une liste de cartes qui **flashent en vert** au passage
+`pending → analyzed`. Le statut du worker (en ligne / en pause / hors ligne) est lu
+en direct depuis BullMQ via `getWorkers()`, et un bouton **Pause** appelle
+`analysisQueue.pause()` pour démontrer la primitive de maintenance.
+
+> La console oppose volontairement deux sources de vérité — la *liste* lit l'état métier
+> persisté en base (`pending` / `analyzed`), tandis que le *pipeline* lit l'état d'exécution
+> de BullMQ (`getJobCounts` + `getWorkers`). L'état « en cours » d'une carte est dérivé
+> côté client à partir de `stats.active` (BullMQ ne dit pas *quelle* ligne est traitée).
 
 **Option 2 — En ligne de commande :**
 ```bash
@@ -94,6 +102,10 @@ curl -X POST http://localhost:3333/requests \
 
 # ~2 s plus tard, le worker a fait son travail :
 curl http://localhost:3333/requests   # status passé à "analyzed"
+
+# État live de la file BullMQ :
+curl http://localhost:3333/queue/stats
+# { "waiting": 0, "active": 0, "completed": 1, "workersOnline": true, "paused": false }
 ```
 
 ---
@@ -102,10 +114,13 @@ curl http://localhost:3333/requests   # status passé à "analyzed"
 
 | Méthode | Chemin | Description |
 |---------|--------|-------------|
-| `GET`  | `/`          | Page de démo HTML (formulaire + liste auto-rafraîchie) |
-| `GET`  | `/health`    | Health check (`It works!`) |
-| `GET`  | `/requests`  | Liste les demandes (plus récentes d'abord) |
-| `POST` | `/requests`  | Crée une demande et déclenche l'analyse. Body : `{ "documentName": string }`. Répond `202`. |
+| `GET`  | `/`              | Console de démo (pipeline live + formulaire + liste). |
+| `GET`  | `/health`        | Health check (`It works!`). |
+| `GET`  | `/requests`      | Liste les demandes (plus récentes d'abord). |
+| `POST` | `/requests`      | Crée une demande, dépose un job BullMQ et répond `202`. Body : `{ "documentName": string }`. |
+| `GET`  | `/queue/stats`   | État live de la file : `{ waiting, active, completed, workersOnline, paused }`. |
+| `POST` | `/queue/pause`   | Met la file en pause via `analysisQueue.pause()` (le worker reste connecté). |
+| `POST` | `/queue/resume`  | Reprend la distribution des jobs. |
 
 ---
 
