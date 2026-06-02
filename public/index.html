@@ -518,6 +518,17 @@
         background: var(--surface-3);
         border-color: var(--line-2);
       }
+      .mini-btn.ghost {
+        background: transparent;
+      }
+      .mini-btn.danger {
+        color: var(--text-3);
+      }
+      .mini-btn.danger:hover {
+        color: var(--err);
+        border-color: var(--err);
+        background: transparent;
+      }
 
       /* ── Submit ───────────────────────────────────────────────────────── */
       .submit {
@@ -643,6 +654,9 @@
         display: flex;
         align-items: center;
         gap: 12px;
+      }
+      .list-head-meta .mini-btn {
+        flex: 0 0 auto;
       }
       .live-pill {
         display: inline-flex;
@@ -1120,6 +1134,14 @@
             <div class="list-head-meta">
               <span class="live-pill"><i class="pulse"></i>polling · GET /requests · 1 s</span>
               <span id="listCount" class="list-count">0</span>
+              <button
+                id="resetBtn"
+                class="mini-btn ghost danger"
+                type="button"
+                title="Vider la table et la file BullMQ"
+              >
+                Vider
+              </button>
             </div>
           </header>
           <div id="listBody">
@@ -1221,6 +1243,7 @@
       const formMsg = document.getElementById('formMsg')
       const listBody = document.getElementById('listBody')
       const listCount = document.getElementById('listCount')
+      const resetBtn = document.getElementById('resetBtn')
 
       // ── État ──────────────────────────────────────────────────────────
       // On garde l'état précédent pour détecter les diffs entre deux polls
@@ -1488,6 +1511,27 @@
           prevStats = stats
         } catch (e) {
           pauseBtn.disabled = false
+        }
+      })
+
+      // ── Reset (vide table + file BullMQ) ──────────────────────────────
+      resetBtn.addEventListener('click', async () => {
+        if (!confirm('Tout supprimer ?\n\nVide la table analysis_requests (id remis à 1) et la file BullMQ. Action irréversible.')) {
+          return
+        }
+        resetBtn.disabled = true
+        try {
+          const res = await fetch('/requests', { method: 'DELETE' })
+          if (!res.ok) throw new Error('HTTP ' + res.status)
+          // On remet à zéro les snapshots locaux pour ne pas déclencher
+          // de flash fantôme ni de paquets parasites au prochain tick.
+          lastStatusById = new Map()
+          prevList = []
+          await tick()
+        } catch (e) {
+          alert('Erreur reset : ' + e.message)
+        } finally {
+          resetBtn.disabled = false
         }
       })
 

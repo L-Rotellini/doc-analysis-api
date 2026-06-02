@@ -26,6 +26,20 @@ router.get('/health', async () => 'It works!')
 router.get('/requests', [AnalysisRequestsController, 'index'])
 router.post('/requests', [AnalysisRequestsController, 'store'])
 
+// Reset complet (demo) : vide la table et obliterate la file BullMQ.
+// On les couple parce que sans rows en base, les jobs en file ne servent a rien.
+// force=true tolere un job en cours d'execution (il sera abandonne).
+router.delete('/requests', async ({ response }) => {
+  const { db } = await import('#database/db')
+  const { sql } = await import('kysely')
+  const { analysisQueue } = await import('#queues/analysis_queue')
+
+  await sql`TRUNCATE TABLE analysis_requests RESTART IDENTITY`.execute(db)
+  await analysisQueue.obliterate({ force: true })
+
+  return response.noContent()
+})
+
 // Etat temps reel de la file BullMQ (distinct de l'etat metier en base).
 // Lecture passe-plat : pas d'invariant, pas de validation, pas de controleur dedie.
 router.get('/queue/stats', async () => {

@@ -118,6 +118,7 @@ curl http://localhost:3333/queue/stats
 | `GET`  | `/health`        | Health check (`It works!`). |
 | `GET`  | `/requests`      | Liste les demandes (plus récentes d'abord). |
 | `POST` | `/requests`      | Crée une demande, dépose un job BullMQ et répond `202`. Body : `{ "documentName": string }`. |
+| `DELETE` | `/requests`    | Reset démo : `TRUNCATE` la table (id remis à 1) et `obliterate` la file BullMQ. Répond `204`. |
 | `GET`  | `/queue/stats`   | État live de la file : `{ waiting, active, completed, workersOnline, paused }`. |
 | `POST` | `/queue/pause`   | Met la file en pause via `analysisQueue.pause()` (le worker reste connecté). |
 | `POST` | `/queue/resume`  | Reprend la distribution des jobs. |
