@@ -597,9 +597,17 @@
       .submit-foot {
         display: flex;
         align-items: center;
+        justify-content: space-between;
         gap: 12px;
         margin-top: 13px;
         flex-wrap: wrap;
+      }
+      .submit-actions {
+        display: flex;
+        gap: 7px;
+      }
+      .submit-actions .mini-btn {
+        flex: 0 0 auto;
       }
       .chips {
         display: flex;
@@ -1123,6 +1131,16 @@
               <button type="button" class="chip" data-fill="facture-0042.pdf">facture-0042.pdf</button>
               <button type="button" class="chip" data-fill="cgv-v3.docx">cgv-v3.docx</button>
             </div>
+            <div class="submit-actions">
+              <button
+                id="burstBtn"
+                type="button"
+                class="mini-btn ghost"
+                title="Poste 5 demandes à la suite avec des noms aléatoires"
+              >
+                +5 en rafale
+              </button>
+            </div>
           </div>
           <div id="formMsg" class="submit-msg" data-tone="idle"></div>
         </section>
@@ -1244,6 +1262,20 @@
       const listBody = document.getElementById('listBody')
       const listCount = document.getElementById('listCount')
       const resetBtn = document.getElementById('resetBtn')
+      const burstBtn = document.getElementById('burstBtn')
+
+      // Pool de noms réalistes pour le bouton "+5 en rafale".
+      const SAMPLE_DOCS = [
+        'rapport-q1-2026.pdf',
+        'contrat-acme.pdf',
+        'facture-0042.pdf',
+        'cgv-v3.docx',
+        'note-frais-mars.pdf',
+        'brief-produit.md',
+        'audit-secu.pdf',
+        'devis-refonte.pdf',
+        'pv-conseil.pdf',
+      ]
 
       // ── État ──────────────────────────────────────────────────────────
       // On garde l'état précédent pour détecter les diffs entre deux polls
@@ -1512,6 +1544,32 @@
         } catch (e) {
           pauseBtn.disabled = false
         }
+      })
+
+      // ── +5 en rafale : poste N demandes échelonnées ────────────────────
+      // Le stagger (~140 ms) sert la lisibilité de la démo : les cartes
+      // apparaissent une à une et la file BullMQ a le temps d'afficher des
+      // pics de "waiting" avant que le worker ne draine.
+      async function postOne(documentName) {
+        const res = await fetch('/requests', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ documentName }),
+        })
+        return res.ok
+      }
+      burstBtn.addEventListener('click', async () => {
+        burstBtn.disabled = true
+        const N = 5
+        const pending = []
+        for (let i = 0; i < N; i++) {
+          const doc = SAMPLE_DOCS[Math.floor(Math.random() * SAMPLE_DOCS.length)]
+          pending.push(postOne(doc))
+          if (i < N - 1) await new Promise((r) => setTimeout(r, 140))
+        }
+        await Promise.all(pending)
+        await tick() // refresh immédiat — le polling reprendra ensuite
+        burstBtn.disabled = false
       })
 
       // ── Reset (vide table + file BullMQ) ──────────────────────────────
