@@ -29,6 +29,48 @@
         </p>
       </header>
 
+      <section
+        class="bg-white p-4 rounded-xl shadow flex items-center justify-between flex-wrap gap-3"
+        aria-label="État de la file BullMQ"
+      >
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-slate-500 uppercase tracking-wide">En attente</span>
+          <span
+            id="statWaiting"
+            class="inline-flex items-center justify-center min-w-[2rem] px-2 py-0.5 rounded-full text-sm font-semibold bg-amber-100 text-amber-700"
+            >0</span
+          >
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-slate-500 uppercase tracking-wide">En cours</span>
+          <span
+            id="statActive"
+            class="inline-flex items-center justify-center min-w-[2rem] px-2 py-0.5 rounded-full text-sm font-semibold bg-sky-100 text-sky-700"
+            >0</span
+          >
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-slate-500 uppercase tracking-wide">Traitées</span>
+          <span
+            id="statCompleted"
+            class="inline-flex items-center justify-center min-w-[2rem] px-2 py-0.5 rounded-full text-sm font-semibold bg-emerald-100 text-emerald-700"
+            >0</span
+          >
+        </div>
+        <div class="flex items-center gap-2">
+          <span id="workerDot" class="inline-block w-2.5 h-2.5 rounded-full bg-slate-300"></span>
+          <span id="workerLabel" class="text-xs text-slate-500">Worker : —</span>
+          <button
+            id="toggleQueueBtn"
+            type="button"
+            class="ml-1 px-2 py-1 text-xs font-medium rounded-md border border-slate-300 text-slate-700 hover:bg-slate-100 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled
+          >
+            …
+          </button>
+        </div>
+      </section>
+
       <section class="bg-white p-4 rounded-xl shadow">
         <form id="form" class="flex gap-2">
           <input
@@ -89,6 +131,23 @@
             Cette page interroge <code>GET /requests</code> chaque seconde pour montrer le
             basculement en direct.
           </li>
+          <li>
+            Le bandeau en haut lit l'<strong>état temps réel de BullMQ</strong>
+            (<code>waiting</code> / <code>active</code> / <code>completed</code> + présence
+            d'un worker via <code>getWorkers()</code>), indépendamment de la liste plus bas
+            qui montre l'<strong>état persisté en base</strong>
+            (<code>pending</code> / <code>analyzed</code>). La pastille worker peut mettre
+            quelques secondes à passer "hors ligne" : BullMQ se base sur des heartbeats,
+            c'est attendu.
+          </li>
+          <li>
+            Le bouton <em>Pause</em> appelle <code>analysisQueue.pause()</code> : la file
+            arrête de distribuer les jobs, mais <strong>le worker reste connecté</strong> —
+            d'où la pastille amber "en pause" plutôt que grise "hors ligne". Les jobs
+            existants finissent, les nouveaux s'empilent en <code>waiting</code>. C'est la
+            primitive prévue pour les maintenances et déploiements, distincte d'un vrai
+            arrêt du process.
+          </li>
         </ol>
       </details>
     </main>
@@ -100,7 +159,14 @@
       const rowsEl = document.getElementById('rows')
       const emptyEl = document.getElementById('empty')
       const pollStatus = document.getElementById('pollStatus')
+      const statWaitingEl = document.getElementById('statWaiting')
+      const statActiveEl = document.getElementById('statActive')
+      const statCompletedEl = document.getElementById('statCompleted')
+      const workerDotEl = document.getElementById('workerDot')
+      const workerLabelEl = document.getElementById('workerLabel')
+      const toggleQueueBtn = document.getElementById('toggleQueueBtn')
       let lastStatusById = new Map()
+      let isPaused = false // dernier etat connu de la file, source pour le bouton
 
       function escapeHtml(s) {
         return String(s).replace(
@@ -153,6 +219,54 @@
         }
       }
 
+      // Lit l'etat temps reel de la file BullMQ (waiting / active / completed
+      // + presence d'un worker via getWorkers() + flag paused). Source distincte
+      // de la liste ci-dessous, qui montre l'etat persiste en base.
+      async function loadStats() {
+        try {
+          const res = await fetch('/queue/stats')
+          const s = await res.json()
+          statWaitingEl.textContent = s.waiting
+          statActiveEl.textContent = s.active
+          statCompletedEl.textContent = s.completed
+          isPaused = !!s.paused
+
+          // 3 etats : hors ligne (gris) > en pause (amber) > en ligne (vert).
+          // L'absence de worker prime visuellement sur la pause.
+          if (!s.workersOnline) {
+            workerDotEl.className = 'inline-block w-2.5 h-2.5 rounded-full bg-slate-300'
+            workerLabelEl.textContent = 'Worker hors ligne'
+            workerLabelEl.className = 'text-xs text-slate-500'
+          } else if (isPaused) {
+            workerDotEl.className = 'inline-block w-2.5 h-2.5 rounded-full bg-amber-500'
+            workerLabelEl.textContent = 'Worker en pause'
+            workerLabelEl.className = 'text-xs text-amber-700'
+          } else {
+            workerDotEl.className = 'inline-block w-2.5 h-2.5 rounded-full bg-emerald-500'
+            workerLabelEl.textContent = 'Worker en ligne'
+            workerLabelEl.className = 'text-xs text-emerald-700'
+          }
+
+          toggleQueueBtn.disabled = false
+          toggleQueueBtn.textContent = isPaused ? 'Reprendre' : 'Pause'
+        } catch (e) {
+          // l'erreur de rafraichissement est deja signalee par loadRequests
+        }
+      }
+
+      // Pause / reprend la file BullMQ. Ne tue PAS le worker : la pastille
+      // reste verte+amber tant que le process worker est connecte.
+      toggleQueueBtn.addEventListener('click', async () => {
+        toggleQueueBtn.disabled = true
+        const action = isPaused ? 'resume' : 'pause'
+        try {
+          await fetch('/queue/' + action, { method: 'POST' })
+          await loadStats() // refresh immediat sans attendre le prochain tick
+        } catch (e) {
+          toggleQueueBtn.disabled = false
+        }
+      })
+
       form.addEventListener('submit', async (e) => {
         e.preventDefault()
         formMsg.textContent = ''
@@ -173,8 +287,13 @@
         }
       })
 
-      loadRequests()
-      setInterval(loadRequests, 1000)
+      // Une seule horloge pour rafraichir la liste ET le bandeau : evite la
+      // derive entre deux setInterval, et facilite un passage futur a SSE.
+      async function tick() {
+        await Promise.all([loadRequests(), loadStats()])
+      }
+      tick()
+      setInterval(tick, 1000)
     </script>
   </body>
 </html>
